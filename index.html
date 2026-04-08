@@ -3,42 +3,73 @@
 <head>
     <meta charset="UTF-8">
     <title>花卉分类识别</title>
-    <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.14.0/dist/ort.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.16.3/dist/ort.min.js"></script>
     <style>
         * {
+            font-family: "Microsoft Yahei", Arial, sans-serif;
             text-align: center;
-            font-family: Arial;
-            margin-top: 20px;
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
         }
-        img {
-            max-width: 400px;
-            max-height: 400px;
+        body {
+            padding: 30px;
+            background-color: #f8f9fa;
+        }
+        h1 {
+            color: #2d3436;
+            margin-bottom: 30px;
+            font-size: 36px;
+        }
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+            background: white;
+            padding: 30px;
+            border-radius: 15px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+        }
+        input[type="file"] {
+            margin: 20px 0;
+            padding: 10px;
+            font-size: 16px;
+        }
+        #preview {
+            max-width: 100%;
+            max-height: 500px;
+            border-radius: 10px;
             margin: 20px auto;
             display: block;
-            border-radius: 10px;
-        }
-        button {
-            padding: 10px 25px;
-            font-size: 16px;
-            background: #4285f4;
-            color: white;
-            border: none;
-            border-radius: 5px;
-            cursor: pointer;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
         }
         #result {
-            font-size: 22px;
-            color: #d45e57;
+            font-size: 24px;
             font-weight: bold;
+            color: #27ae60;
+            margin-top: 20px;
+            padding: 15px;
+            border-radius: 8px;
+            background-color: #f1f8f4;
+        }
+        .loading {
+            color: #f39c12;
+        }
+        .success {
+            color: #27ae60;
+        }
+        .error {
+            color: #e74c3c;
         }
     </style>
 </head>
 
 <body>
-    <h1>🌼 花卉分类识别模型</h1>
-    <input type="file" id="imageInput" accept="image/*">
-    <img id="preview">
-    <div id="result">等待上传图片...</div>
+    <div class="container">
+        <h1>🌼 花卉分类识别模型</h1>
+        <input type="file" id="imageInput" accept="image/*">
+        <img id="preview">
+        <div id="result" class="loading">✅ 模型加载中...</div>
+    </div>
 
     <script>
         let session;
@@ -46,54 +77,117 @@
         const preview = document.getElementById('preview');
         const result = document.getElementById('result');
 
-        // 花卉分类标签（按你的模型修改）
-        const classes = ['牵牛花' ,'雏菊', '蒲公英','荷花', '玫瑰', '向日葵', '郁金香'];
+        // 【关键】必须和你YOLO训练时的标签顺序完全一致！
+        // 请根据你训练时的data.yaml修改，这里以常见5分类为例
+        const classes = ['bellflower', 'daisy', 'dandelion', 'lotus', 'rose','sunflower','tulip'];
 
-        // 加载模型
+        // 加载YOLOv8 ONNX模型
         async function loadModel() {
             try {
-                session = await ort.InferenceSession.create('./best.onnx');
+                // 配置ONNX Runtime，启用WebGL加速
+                ort.env.wasm.numThreads = 4;
+                ort.env.wasm.simd = true;
+                session = await ort.InferenceSession.create('./model.onnx', {
+                    executionProviders: ['webgl', 'cpu']
+                });
                 result.innerText = "✅ 模型加载成功！请上传花卉图片";
+                result.className = "success";
             } catch (e) {
-                console.error(e);
-                result.innerText = "模型加载失败";
+                console.error("模型加载失败:", e);
+                result.innerText = "❌ 模型加载失败，请检查model.onnx文件";
+                result.className = "error";
             }
         }
 
-        // 图片预处理 + 预测
+        // 图片上传预览
         imageInput.onchange = async (e) => {
             const file = e.target.files[0];
             if (!file) return;
 
-            const img = new Image();
-            img.src = URL.createObjectURL(file);
-            img.onload = predict;
-            preview.src = img.src;
-        }
+            // 显示预览图
+            const reader = new FileReader();
+            reader.onload = (event) => {
+                preview.src = event.target.result;
+                preview.onload = predict; // 图片加载完成后执行预测
+            };
+            reader.readAsDataURL(file);
+        };
 
+        // YOLOv8分类模型预测核心逻辑
         async function predict() {
-            const canvas = document.createElement('canvas');
-            const ctx = canvas.getContext('2d');
-            canvas.width = 224;
-            canvas.height = 224;
-            ctx.drawImage(preview, 0, 0, 224, 224);
-
-            const imageData = ctx.getImageData(0, 0, 224, 224);
-            const data = Float32Array.from(imageData.data).map(x => x / 255.0);
-
-            const input = new ort.Tensor('float32', data, [1, 3, 224, 224]);
-            const output = await session.run({ input });
-            const scores = output.output.data;
-
-            let maxIndex = 0;
-            for (let i = 1; i < scores.length; i++) {
-                if (scores[i] > scores[maxIndex]) maxIndex = i;
+            if (!session) {
+                result.innerText = "❌ 模型未加载完成，请等待";
+                result.className = "error";
+                return;
             }
 
-            result.innerText = `🌸 识别结果：${classes[maxIndex]}`;
+            result.innerText = "🔍 正在识别中...";
+            result.className = "loading";
+
+            try {
+                // 1. 图片预处理：resize到224x224，转RGB，归一化
+                const canvas = document.createElement('canvas');
+                const ctx = canvas.getContext('2d');
+                const targetSize = 224;
+                canvas.width = targetSize;
+                canvas.height = targetSize;
+
+                // 等比例缩放+居中裁剪，避免图片变形
+                const scale = Math.max(targetSize / preview.width, targetSize / preview.height);
+                const x = (targetSize - preview.width * scale) / 2;
+                const y = (targetSize - preview.height * scale) / 2;
+                ctx.drawImage(preview, x, y, preview.width * scale, preview.height * scale);
+
+                // 获取像素数据（RGBA格式）
+                const imageData = ctx.getImageData(0, 0, targetSize, targetSize).data;
+
+                // 2. 转换为YOLOv8要求的输入格式：[1, 3, 224, 224]，RGB通道分离，归一化0-1
+                const inputTensor = new ort.Tensor(
+                    'float32',
+                    new Float32Array(3 * targetSize * targetSize),
+                    [1, 3, targetSize, targetSize]
+                );
+
+                // 填充输入张量：R/G/B通道分别赋值
+                for (let i = 0; i < targetSize * targetSize; i++) {
+                    const r = imageData[i * 4] / 255.0;
+                    const g = imageData[i * 4 + 1] / 255.0;
+                    const b = imageData[i * 4 + 2] / 255.0;
+                    
+                    inputTensor.data[i] = r; // R通道
+                    inputTensor.data[targetSize * targetSize + i] = g; // G通道
+                    inputTensor.data[2 * targetSize * targetSize + i] = b; // B通道
+                }
+
+                // 3. 执行模型推理
+                const feeds = { input: inputTensor };
+                const output = await session.run(feeds);
+                const scores = output.output.data;
+
+                // 4. 解析预测结果：取置信度最高的类别
+                let maxScore = -Infinity;
+                let maxIndex = 0;
+                for (let i = 0; i < scores.length; i++) {
+                    if (scores[i] > maxScore) {
+                        maxScore = scores[i];
+                        maxIndex = i;
+                    }
+                }
+
+                // 5. 显示结果（保留2位小数的置信度）
+                const confidence = (maxScore * 100).toFixed(2);
+                result.innerText = `🌸 识别结果：${classes[maxIndex]}（置信度：${confidence}%）`;
+                result.className = "success";
+
+            } catch (e) {
+                console.error("预测失败:", e);
+                result.innerText = "❌ 识别失败，请重试";
+                result.className = "error";
+            }
         }
 
-        loadModel();
+        // 页面加载完成后自动加载模型
+        window.onload = loadModel;
     </script>
 </body>
 </html>
