@@ -87,7 +87,7 @@
                 // 配置ONNX Runtime，启用WebGL加速
                 ort.env.wasm.numThreads = 4;
                 ort.env.wasm.simd = true;
-                session = await ort.InferenceSession.create('./model.onnx', {
+                session = await ort.InferenceSession.create('./best.onnx', {
                     executionProviders: ['webgl', 'cpu']
                 });
                 result.innerText = "✅ 模型加载成功！请上传花卉图片";
