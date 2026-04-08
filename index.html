@@ -66,10 +66,7 @@
         <h1>🌼 Flower Classification</h1>
         <input type="file" id="imageInput" accept="image/*"><br>
         <img id="preview"><br>
-        
-        <!-- 【识别按钮】手动控制识别 -->
         <button id="startBtn" disabled>Start Recognition</button>
-        
         <div id="result" class="loading">Loading model...</div>
     </div>
 
@@ -80,77 +77,120 @@
         const result = document.getElementById('result');
         const startBtn = document.getElementById('startBtn');
 
-        // 7 种花卉
+        // 严格匹配训练时的标签顺序
         const classes = ['bellflower', 'daisy', 'dandelion', 'lotus', 'rose','sunflower','tulip'];
 
-        // 加载模型
+        // 加载模型（打印输入输出名，用于调试）
         async function loadModel() {
             try {
                 ort.env.wasm.numThreads = 4;
-                session = await ort.InferenceSession.create('./best.onnx', { executionProviders: ['webgl', 'cpu'] });
+                ort.env.wasm.simd = true;
+                session = await ort.InferenceSession.create('./best.onnx', {
+                    executionProviders: ['webgl', 'cpu']
+                });
+                console.log("✅ 模型加载成功！输入名:", session.inputNames, "输出名:", session.outputNames);
                 result.innerText = "✅ Model loaded successfully";
-                startBtn.disabled = false; // 启用按钮
+                startBtn.disabled = false;
             } catch (e) {
+                console.error("❌ 模型加载失败:", e);
                 result.innerText = "❌ Model load failed";
-                console.error(e);
+                result.className = "error";
             }
         }
 
-        // 上传图片
+        // 上传图片预览
         imageInput.onchange = (e) => {
             const file = e.target.files[0];
             if (!file) return;
             preview.src = URL.createObjectURL(file);
+            result.innerText = "✅ Image uploaded, click Start Recognition";
+            result.className = "success";
         };
 
-        // 【按钮点击 → 开始识别】
+        // 按钮点击触发识别
         startBtn.onclick = predict;
 
-        // 识别逻辑
+        // 核心识别逻辑（修复所有错误）
         async function predict() {
+            // 1. 前置校验
+            if (!session) {
+                result.innerText = "❌ Model not ready";
+                result.className = "error";
+                return;
+            }
             if (!preview.src) {
                 result.innerText = "⚠ Please upload an image first";
+                result.className = "error";
                 return;
             }
 
             startBtn.disabled = true;
             result.innerText = "🔍 Recognizing...";
+            result.className = "loading";
 
             try {
+                // 2. 图片预处理：等比例缩放+居中裁剪，避免变形
                 const canvas = document.createElement('canvas');
                 const ctx = canvas.getContext('2d');
-                const size = 224;
-                canvas.width = size;
-                canvas.height = size;
+                const targetSize = 224;
+                canvas.width = targetSize;
+                canvas.height = targetSize;
 
-                ctx.drawImage(preview, 0, 0, size, size);
-                const data = ctx.getImageData(0,0,size,size).data;
+                const scale = Math.max(targetSize / preview.width, targetSize / preview.height);
+                const x = (targetSize - preview.width * scale) / 2;
+                const y = (targetSize - preview.height * scale) / 2;
+                ctx.drawImage(preview, x, y, preview.width * scale, preview.height * scale);
 
-                const tensor = new ort.Tensor('float32', new Float32Array(3*size*size), [1,3,size,size]);
+                // 3. 获取像素数据，转换为模型输入格式
+                const imageData = ctx.getImageData(0, 0, targetSize, targetSize).data;
+                const inputTensor = new ort.Tensor(
+                    'float32',
+                    new Float32Array(3 * targetSize * targetSize),
+                    [1, 3, targetSize, targetSize]
+                );
 
-                for (let i=0; i<size*size; i++) {
-                    tensor.data[i] = data[i*4]/255;
-                    tensor.data[size*size +i] = data[i*4+1]/255;
-                    tensor.data[2*size*size +i] = data[i*4+2]/255;
+                for (let i = 0; i < targetSize * targetSize; i++) {
+                    const r = imageData[i * 4] / 255.0;
+                    const g = imageData[i * 4 + 1] / 255.0;
+                    const b = imageData[i * 4 + 2] / 255.0;
+                    
+                    inputTensor.data[i] = r;
+                    inputTensor.data[targetSize * targetSize + i] = g;
+                    inputTensor.data[2 * targetSize * targetSize + i] = b;
                 }
 
-                const output = await session.run({ images: tensor });
-                const scores = output.output.data;
+                // 4. 执行推理（动态获取输入输出名，适配所有YOLO版本）
+                const feeds = { [session.inputNames[0]]: inputTensor };
+                const output = await session.run(feeds);
+                const scores = output[session.outputNames[0]].data;
 
-                let max = 0, idx=0;
-                scores.forEach((s,i)=>{ if(s>max){ max=s; idx=i; } });
+                // 5. 解析结果，取置信度最高的类别
+                let maxScore = -Infinity;
+                let maxIndex = 0;
+                for (let i = 0; i < scores.length; i++) {
+                    if (scores[i] > maxScore) {
+                        maxScore = scores[i];
+                        maxIndex = i;
+                    }
+                }
 
-                result.innerText = `🌸 Result: ${classes[idx]} (${(max*100).toFixed(2)}%)`;
+                // 6. 显示结果
+                const confidence = (maxScore * 100).toFixed(2);
+                result.innerText = `🌸 Result: ${classes[maxIndex]} (${confidence}%)`;
+                result.className = "success";
 
             } catch (e) {
+                console.error("❌ 预测失败:", e);
                 result.innerText = "❌ Recognition failed";
-                console.error(e);
+                result.className = "error";
+            } finally {
+                // 无论成功失败，都恢复按钮
+                startBtn.disabled = false;
             }
-
-            startBtn.disabled = false;
         }
 
-        loadModel();
+        // 页面加载自动加载模型
+        window.onload = loadModel;
     </script>
 </body>
 </html>
