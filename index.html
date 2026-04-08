@@ -65,10 +65,10 @@
 
 <body>
     <div class="container">
-        <h1>🌼 花卉分类识别模型</h1>
+        <h1>🌼 Flower Classification</h1>
         <input type="file" id="imageInput" accept="image/*">
         <img id="preview">
-        <div id="result" class="loading">✅ 模型加载中...</div>
+        <div id="result" class="loading">✅ Model loaded successfully!</div>
     </div>
 
     <script>
@@ -77,94 +77,83 @@
         const preview = document.getElementById('preview');
         const result = document.getElementById('result');
 
-        // 【关键】必须和你YOLO训练时的标签顺序完全一致！
-        // 请根据你训练时的data.yaml修改，这里以常见5分类为例
+        // 你的 7 分类标签（英文）
         const classes = ['bellflower', 'daisy', 'dandelion', 'lotus', 'rose','sunflower','tulip'];
 
-        // 加载YOLOv8 ONNX模型
         async function loadModel() {
             try {
-                // 配置ONNX Runtime，启用WebGL加速
                 ort.env.wasm.numThreads = 4;
                 ort.env.wasm.simd = true;
                 session = await ort.InferenceSession.create('./best.onnx', {
                     executionProviders: ['webgl', 'cpu']
                 });
-                result.innerText = "✅ 模型加载成功！请上传花卉图片";
+                result.innerText = "✅ Model loaded! Please upload an image.";
                 result.className = "success";
             } catch (e) {
-                console.error("模型加载失败:", e);
-                result.innerText = "❌ 模型加载失败，请检查model.onnx文件";
+                console.error("Model load failed:", e);
+                result.innerText = "❌ Model load failed!";
                 result.className = "error";
             }
         }
 
-        // 图片上传预览
         imageInput.onchange = async (e) => {
             const file = e.target.files[0];
             if (!file) return;
-
-            // 显示预览图
             const reader = new FileReader();
             reader.onload = (event) => {
                 preview.src = event.target.result;
-                preview.onload = predict; // 图片加载完成后执行预测
+                preview.onload = predict;
             };
             reader.readAsDataURL(file);
         };
 
-        // YOLOv8分类模型预测核心逻辑
         async function predict() {
             if (!session) {
-                result.innerText = "❌ 模型未加载完成，请等待";
+                result.innerText = "❌ Model not ready";
                 result.className = "error";
                 return;
             }
 
-            result.innerText = "🔍 正在识别中...";
+            result.innerText = "🔍 Recognizing...";
             result.className = "loading";
 
             try {
-                // 1. 图片预处理：resize到224x224，转RGB，归一化
                 const canvas = document.createElement('canvas');
                 const ctx = canvas.getContext('2d');
                 const targetSize = 224;
                 canvas.width = targetSize;
                 canvas.height = targetSize;
 
-                // 等比例缩放+居中裁剪，避免图片变形
                 const scale = Math.max(targetSize / preview.width, targetSize / preview.height);
                 const x = (targetSize - preview.width * scale) / 2;
                 const y = (targetSize - preview.height * scale) / 2;
                 ctx.drawImage(preview, x, y, preview.width * scale, preview.height * scale);
 
-                // 获取像素数据（RGBA格式）
                 const imageData = ctx.getImageData(0, 0, targetSize, targetSize).data;
 
-                // 2. 转换为YOLOv8要求的输入格式：[1, 3, 224, 224]，RGB通道分离，归一化0-1
                 const inputTensor = new ort.Tensor(
                     'float32',
                     new Float32Array(3 * targetSize * targetSize),
                     [1, 3, targetSize, targetSize]
                 );
 
-                // 填充输入张量：R/G/B通道分别赋值
                 for (let i = 0; i < targetSize * targetSize; i++) {
                     const r = imageData[i * 4] / 255.0;
                     const g = imageData[i * 4 + 1] / 255.0;
                     const b = imageData[i * 4 + 2] / 255.0;
                     
-                    inputTensor.data[i] = r; // R通道
-                    inputTensor.data[targetSize * targetSize + i] = g; // G通道
-                    inputTensor.data[2 * targetSize * targetSize + i] = b; // B通道
+                    inputTensor.data[i] = r;
+                    inputTensor.data[targetSize * targetSize + i] = g;
+                    inputTensor.data[2 * targetSize * targetSize + i] = b;
                 }
 
-                // 3. 执行模型推理
-                const feeds = { input: inputTensor };
+                // -----------------------
+                // ✅ 这里修复了！！！
+                // -----------------------
+                const feeds = { images: inputTensor };
                 const output = await session.run(feeds);
                 const scores = output.output.data;
 
-                // 4. 解析预测结果：取置信度最高的类别
                 let maxScore = -Infinity;
                 let maxIndex = 0;
                 for (let i = 0; i < scores.length; i++) {
@@ -174,19 +163,17 @@
                     }
                 }
 
-                // 5. 显示结果（保留2位小数的置信度）
                 const confidence = (maxScore * 100).toFixed(2);
-                result.innerText = `🌸 识别结果：${classes[maxIndex]}（置信度：${confidence}%）`;
+                result.innerText = `🌸 Result: ${classes[maxIndex]} (${confidence}%)`;
                 result.className = "success";
 
             } catch (e) {
-                console.error("预测失败:", e);
-                result.innerText = "❌ 识别失败，请重试";
+                console.error("Predict failed:", e);
+                result.innerText = "❌ Recognition failed";
                 result.className = "error";
             }
         }
 
-        // 页面加载完成后自动加载模型
         window.onload = loadModel;
     </script>
 </body>
