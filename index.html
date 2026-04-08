@@ -76,11 +76,7 @@
         const preview = document.getElementById('preview');
         const result = document.getElementById('result');
         const startBtn = document.getElementById('startBtn');
-
-        // 严格匹配训练时的标签顺序
         const classes = ['bellflower', 'daisy', 'dandelion', 'lotus', 'rose','sunflower','tulip'];
-
-        // 加载模型（打印输入输出名，用于调试）
         async function loadModel() {
             try {
                 ort.env.wasm.numThreads = 4;
@@ -88,48 +84,39 @@
                 session = await ort.InferenceSession.create('./best.onnx', {
                     executionProviders: ['webgl', 'cpu']
                 });
-                console.log("✅ 模型加载成功！输入名:", session.inputNames, "输出名:", session.outputNames);
-                result.innerText = "✅ Model loaded successfully";
+                console.log("模型加载成功！输入名:", session.inputNames, "输出名:", session.outputNames);
+                result.innerText = "模型加载成功";
                 startBtn.disabled = false;
             } catch (e) {
-                console.error("❌ 模型加载失败:", e);
-                result.innerText = "❌ Model load failed";
+                console.error("模型加载失败:", e);
+                result.innerText = "模型加载失败";
                 result.className = "error";
             }
         }
-
-        // 上传图片预览
         imageInput.onchange = (e) => {
             const file = e.target.files[0];
             if (!file) return;
             preview.src = URL.createObjectURL(file);
-            result.innerText = "✅ Image uploaded, click Start Recognition";
+            result.innerText = "图片已上传，点击识别";
             result.className = "success";
         };
-
-        // 按钮点击触发识别
         startBtn.onclick = predict;
-
-        // 核心识别逻辑（修复所有错误）
         async function predict() {
-            // 1. 前置校验
             if (!session) {
-                result.innerText = "❌ Model not ready";
+                result.innerText = "模型未加载";
                 result.className = "error";
                 return;
             }
             if (!preview.src) {
-                result.innerText = "⚠ Please upload an image first";
+                result.innerText = "请上传图片";
                 result.className = "error";
                 return;
             }
-
             startBtn.disabled = true;
-            result.innerText = "🔍 Recognizing...";
+            result.innerText = "识别";
             result.className = "loading";
 
             try {
-                // 2. 图片预处理：等比例缩放+居中裁剪，避免变形
                 const canvas = document.createElement('canvas');
                 const ctx = canvas.getContext('2d');
                 const targetSize = 224;
@@ -140,8 +127,6 @@
                 const x = (targetSize - preview.width * scale) / 2;
                 const y = (targetSize - preview.height * scale) / 2;
                 ctx.drawImage(preview, x, y, preview.width * scale, preview.height * scale);
-
-                // 3. 获取像素数据，转换为模型输入格式
                 const imageData = ctx.getImageData(0, 0, targetSize, targetSize).data;
                 const inputTensor = new ort.Tensor(
                     'float32',
@@ -158,13 +143,10 @@
                     inputTensor.data[targetSize * targetSize + i] = g;
                     inputTensor.data[2 * targetSize * targetSize + i] = b;
                 }
-
-                // 4. 执行推理（动态获取输入输出名，适配所有YOLO版本）
                 const feeds = { [session.inputNames[0]]: inputTensor };
                 const output = await session.run(feeds);
                 const scores = output[session.outputNames[0]].data;
 
-                // 5. 解析结果，取置信度最高的类别
                 let maxScore = -Infinity;
                 let maxIndex = 0;
                 for (let i = 0; i < scores.length; i++) {
@@ -174,22 +156,18 @@
                     }
                 }
 
-                // 6. 显示结果
                 const confidence = (maxScore * 100).toFixed(2);
-                result.innerText = `🌸 Result: ${classes[maxIndex]} (${confidence}%)`;
+                result.innerText = `Result: ${classes[maxIndex]} (${confidence}%)`;
                 result.className = "success";
 
             } catch (e) {
-                console.error("❌ 预测失败:", e);
-                result.innerText = "❌ Recognition failed";
+                console.error("预测失败:", e);
+                result.innerText = "识别失败";
                 result.className = "error";
             } finally {
-                // 无论成功失败，都恢复按钮
                 startBtn.disabled = false;
             }
         }
-
-        // 页面加载自动加载模型
         window.onload = loadModel;
     </script>
 </body>
